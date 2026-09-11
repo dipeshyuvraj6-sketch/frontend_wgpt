@@ -1,6 +1,19 @@
-import { FormEvent, useState } from 'react';
-import { Cloud, Droplets, MapPin, Search, Sun, Thermometer, Wind, LoaderCircle } from 'lucide-react';
+import { FormEvent, useRef, useState } from 'react';
+import { Cloud, Droplets, MapPin, Search, Sun, Thermometer, Wind, LoaderCircle, Mic, MicOff } from 'lucide-react';
 import { geocodeCity, sendChat, WeatherData } from './lib/weather-api';
+
+type SpeechRecognitionResultEvent = Event & { results: { [index: number]: { [index: number]: { transcript: string } } } };
+type SpeechRecognitionInstance = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+};
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
 type ForecastDay = { day: string; high: string; low: string; icon: string };
 
@@ -33,6 +46,37 @@ function App() {
   const [message, setMessage] = useState('A bright start with a little cloud later in the day.');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+
+  function toggleVoiceInput() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    const speechWindow = window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor };
+    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      setError('Voice input is not supported in this browser. Try Chrome or Edge');
+      return;
+    }
+
+    const recognition = new Recognition();
+    recognition.lang = 'en-IN';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => setQuery(event.results[0][0].transcript);
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => {
+      setListening(false);
+      setError('Microphone access was not available');
+    };
+    recognitionRef.current = recognition;
+    setError('');
+    setListening(true);
+    recognition.start();
+  }
 
   async function handleSearch(event: FormEvent) {
     event.preventDefault();
@@ -77,6 +121,9 @@ function App() {
           <form className="search-form" onSubmit={handleSearch}>
             <Search size={20} aria-hidden="true" />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search a city..." aria-label="Search a city" />
+            <button className={`voice-button${listening ? ' listening' : ''}`} type="button" onClick={toggleVoiceInput} aria-label={listening ? 'Stop voice input' : 'Start voice input'} title={listening ? 'Stop voice input' : 'Speak a city'}>
+              {listening ? <MicOff size={18} /> : <Mic size={18} />}
+            </button>
             <button type="submit" disabled={loading}>{loading ? <LoaderCircle className="spin" size={18} /> : 'Ask WeatherGPT'}</button>
           </form>
           {error && <p className="error" role="alert">{error}. Start the backend or set <code>VITE_API_URL</code>.</p>}
