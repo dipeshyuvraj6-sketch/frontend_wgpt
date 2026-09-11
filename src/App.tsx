@@ -70,7 +70,7 @@ function App() {
     recognition.onend = () => setListening(false);
     recognition.onerror = () => {
       setListening(false);
-      setError('Microphone access was not available');
+      setError('Microphone access was not available. Allow microphone permission in your browser and try again');
     };
     recognitionRef.current = recognition;
     setError('');
@@ -126,7 +126,7 @@ function App() {
             </button>
             <button type="submit" disabled={loading}>{loading ? <LoaderCircle className="spin" size={18} /> : 'Ask WeatherGPT'}</button>
           </form>
-          {error && <p className="error" role="alert">{error}. Start the backend or set <code>VITE_API_URL</code>.</p>}
+          {error && <p className="error" role="alert">{error}</p>}
         </div>
         <div className="sun-orbit" aria-hidden="true"><div className="sun-disc"><Sun size={72} strokeWidth={1.2} /></div></div>
       </section>
