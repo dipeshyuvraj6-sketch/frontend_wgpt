@@ -114,15 +114,38 @@ function App() {
     recognition.start();
   }
 
+  async function loadWeather(city: string, latitude: number | null, longitude: number | null, resolvedLocation: string) {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await sendChat({ message: city, lat: latitude, lon: longitude });
+      if (result.intent === 'blocked' || !result.weather_data) {
+        setMessage(result.response || 'Ask me about the weather, temperature, rain, or forecast.');
+        setQuery('');
+        setSelectedPlace(null);
+        setSuggestions([]);
+        return;
+      }
+      setLocation(result.location && result.location !== 'Current Location' ? result.location : resolvedLocation || 'Current Location');
+      setWeather(result.weather_data);
+      setMessage(result.response || 'Here is the latest forecast.');
+      setQuery('');
+      setSelectedPlace(null);
+      setSuggestions([]);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'The weather service is unavailable.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleSearch(event: FormEvent) {
     event.preventDefault();
     const city = query.trim();
     if (!city) return;
-    setLoading(true);
-    setError('');
     try {
-      let latitude: number;
-      let longitude: number;
+      let latitude: number | null = null;
+      let longitude: number | null = null;
       let resolvedLocation = '';
 
       if (isWeatherOnlyQuery(city)) {
@@ -139,27 +162,17 @@ function App() {
         resolvedLocation = [place.name, place.state, place.country].filter(Boolean).join(', ');
       } else {
         const coordinates = selectedPlace?.name === city ? selectedPlace : (await searchCities(city))[0];
-        if (!coordinates) throw new Error(`Could not find a location for "${city}".`);
-        latitude = coordinates.latitude;
-        longitude = coordinates.longitude;
-        resolvedLocation = displayLocation(coordinates);
-        setQuery(coordinates.name);
+        if (coordinates) {
+          latitude = coordinates.latitude;
+          longitude = coordinates.longitude;
+          resolvedLocation = displayLocation(coordinates);
+          setQuery(coordinates.name);
+        }
       }
 
-      const result = await sendChat({ message: city, lat: latitude, lon: longitude });
-      if (result.intent === 'blocked' || !result.weather_data) {
-        throw new Error(result.response || 'The backend did not return weather data');
-      }
-      setLocation(result.location && result.location !== 'Current Location' ? result.location : resolvedLocation || 'Current Location');
-      setWeather(result.weather_data || null);
-      setMessage(result.response || 'Here is the latest forecast.');
-      setQuery('');
-      setSelectedPlace(null);
-      setSuggestions([]);
+      await loadWeather(city, latitude, longitude, resolvedLocation);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'The weather service is unavailable.');
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -186,7 +199,7 @@ function App() {
               <input value={query} onChange={(event) => { setQuery(event.target.value); setSelectedPlace(null); }} placeholder="Search a city or ask about the weather..." aria-label="Search a city or ask about the weather" autoComplete="off" />
               {(suggestionsLoading || suggestions.length > 0) && <div className="suggestions" role="listbox">
                 {suggestionsLoading && <div className="suggestion-status">Finding places...</div>}
-                {suggestions.map((suggestion) => <button type="button" className="suggestion" key={`${suggestion.latitude}-${suggestion.longitude}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(suggestion.name); setSelectedPlace(suggestion); setSuggestions([]); }}>
+                {suggestions.map((suggestion) => <button type="button" className="suggestion" key={`${suggestion.latitude}-${suggestion.longitude}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(suggestion.name); setSelectedPlace(suggestion); setSuggestions([]); void loadWeather(suggestion.name, suggestion.latitude, suggestion.longitude, displayLocation(suggestion)); }}>
                   <strong>{suggestion.name}</strong><span>{[suggestion.admin1, suggestion.country].filter(Boolean).join(', ')}</span>
                 </button>)}
               </div>}
