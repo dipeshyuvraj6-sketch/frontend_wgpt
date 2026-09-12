@@ -114,11 +114,11 @@ function App() {
     recognition.start();
   }
 
-  async function loadWeather(city: string, latitude: number | null, longitude: number | null, resolvedLocation: string) {
+  async function loadWeather(city: string, latitude: number | null, longitude: number | null, resolvedLocation: string, requestMessage = city) {
     setLoading(true);
     setError('');
     try {
-      const result = await sendChat({ message: city, lat: latitude, lon: longitude });
+      const result = await sendChat({ message: requestMessage, lat: latitude, lon: longitude });
       if (result.intent === 'blocked' || !result.weather_data) {
         setMessage(result.response || 'Ask me about the weather, temperature, rain, or forecast.');
         setQuery('');
@@ -170,7 +170,8 @@ function App() {
         }
       }
 
-      await loadWeather(city, latitude, longitude, resolvedLocation);
+      const requestMessage = latitude === null || isWeatherOnlyQuery(city) ? city : 'weather';
+      await loadWeather(city, latitude, longitude, resolvedLocation, requestMessage);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'The weather service is unavailable.');
     }
@@ -199,7 +200,7 @@ function App() {
               <input value={query} onChange={(event) => { setQuery(event.target.value); setSelectedPlace(null); }} placeholder="Search a city or ask about the weather..." aria-label="Search a city or ask about the weather" autoComplete="off" />
               {(suggestionsLoading || suggestions.length > 0) && <div className="suggestions" role="listbox">
                 {suggestionsLoading && <div className="suggestion-status">Finding places...</div>}
-                {suggestions.map((suggestion) => <button type="button" className="suggestion" key={`${suggestion.latitude}-${suggestion.longitude}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(suggestion.name); setSelectedPlace(suggestion); setSuggestions([]); void loadWeather(suggestion.name, suggestion.latitude, suggestion.longitude, displayLocation(suggestion)); }}>
+                {suggestions.map((suggestion) => <button type="button" className="suggestion" key={`${suggestion.latitude}-${suggestion.longitude}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(suggestion.name); setSelectedPlace(suggestion); setSuggestions([]); void loadWeather(suggestion.name, suggestion.latitude, suggestion.longitude, displayLocation(suggestion), 'weather'); }}>
                   <strong>{suggestion.name}</strong><span>{[suggestion.admin1, suggestion.country].filter(Boolean).join(', ')}</span>
                 </button>)}
               </div>}
