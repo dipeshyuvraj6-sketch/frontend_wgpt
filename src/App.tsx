@@ -1,6 +1,6 @@
-import { FormEvent, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Cloud, Droplets, MapPin, Search, Sun, Thermometer, Wind, LoaderCircle, Mic, MicOff } from 'lucide-react';
-import { geocodeCity, sendChat, WeatherData } from './lib/weather-api';
+import { GeocodingResult, reverseGeocode, searchCities, sendChat, WeatherData } from './lib/weather-api';
 
 type SpeechRecognitionResultEvent = Event & { results: { [index: number]: { [index: number]: { transcript: string } } } };
 type SpeechRecognitionInstance = {
@@ -39,6 +39,15 @@ function forecastFromWeather(data: WeatherData | null): ForecastDay[] {
   }));
 }
 
+function isWeatherOnlyQuery(query: string) {
+  const normalized = query.toLowerCase().replace(/[?!.,']/g, '').trim();
+  return /^(what is the |whats the |what's the |how is the |hows the )?(weather|weather today|weather like today|forecast|forecast today)$/.test(normalized);
+}
+
+function displayLocation(result: GeocodingResult) {
+  return [result.name, result.admin1, result.country].filter(Boolean).join(', ');
+}
+
 function App() {
   const [location, setLocation] = useState('London');
   const [query, setQuery] = useState('');
@@ -47,7 +56,34 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [listening, setListening] = useState(false);
+  const [suggestions, setSuggestions] = useState<GeocodingResult[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [selectedPlace, setSelectedPlace] = useState<GeocodingResult | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+
+  useEffect(() => {
+    const cityQuery = query.trim();
+    if (!cityQuery || isWeatherOnlyQuery(cityQuery) || selectedPlace?.name === cityQuery) {
+      setSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSuggestionsLoading(true);
+      try {
+        setSuggestions(await searchCities(cityQuery, controller.signal));
+      } catch (requestError) {
+        if (!(requestError instanceof DOMException && requestError.name === 'AbortError')) setSuggestions([]);
+      } finally {
+        setSuggestionsLoading(false);
+      }
+    }, 300);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [query, selectedPlace]);
 
   function toggleVoiceInput() {
     if (listening) {
@@ -85,15 +121,41 @@ function App() {
     setLoading(true);
     setError('');
     try {
-      const coordinates = await geocodeCity(city);
-      const result = await sendChat({ message: 'What is the current weather?', lat: coordinates.latitude, lon: coordinates.longitude });
+      let latitude: number;
+      let longitude: number;
+      let resolvedLocation = '';
+
+      if (isWeatherOnlyQuery(city)) {
+        if (!navigator.geolocation) throw new Error('Location detection is not supported in this browser. Please search for a city instead.');
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 });
+        }).catch((locationError: GeolocationPositionError) => {
+          if (locationError.code === locationError.PERMISSION_DENIED) throw new Error('Location access was denied. Please allow location permission or search for a city.');
+          throw new Error('We could not detect your location. Please search for a city instead.');
+        });
+        latitude = position.coords.latitude;
+        longitude = position.coords.longitude;
+        const place = await reverseGeocode(latitude, longitude);
+        resolvedLocation = [place.name, place.state, place.country].filter(Boolean).join(', ');
+      } else {
+        const coordinates = selectedPlace?.name === city ? selectedPlace : (await searchCities(city))[0];
+        if (!coordinates) throw new Error(`Could not find a location for "${city}".`);
+        latitude = coordinates.latitude;
+        longitude = coordinates.longitude;
+        resolvedLocation = displayLocation(coordinates);
+        setQuery(coordinates.name);
+      }
+
+      const result = await sendChat({ message: city, lat: latitude, lon: longitude });
       if (result.intent === 'blocked' || !result.weather_data) {
         throw new Error(result.response || 'The backend did not return weather data');
       }
-      setLocation(result.location && result.location !== 'Current Location' ? result.location : coordinates.name);
+      setLocation(result.location && result.location !== 'Current Location' ? result.location : resolvedLocation || 'Current Location');
       setWeather(result.weather_data || null);
       setMessage(result.response || 'Here is the latest forecast.');
       setQuery('');
+      setSelectedPlace(null);
+      setSuggestions([]);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'The weather service is unavailable.');
     } finally {
@@ -120,7 +182,15 @@ function App() {
           <p className="intro">Ask about any place and get a clear, conversational outlook for your day.</p>
           <form className="search-form" onSubmit={handleSearch}>
             <Search size={20} aria-hidden="true" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search a city..." aria-label="Search a city" />
+            <div className="search-input-wrap">
+              <input value={query} onChange={(event) => { setQuery(event.target.value); setSelectedPlace(null); }} placeholder="Search a city or ask about the weather..." aria-label="Search a city or ask about the weather" autoComplete="off" />
+              {(suggestionsLoading || suggestions.length > 0) && <div className="suggestions" role="listbox">
+                {suggestionsLoading && <div className="suggestion-status">Finding places...</div>}
+                {suggestions.map((suggestion) => <button type="button" className="suggestion" key={`${suggestion.latitude}-${suggestion.longitude}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setQuery(suggestion.name); setSelectedPlace(suggestion); setSuggestions([]); }}>
+                  <strong>{suggestion.name}</strong><span>{[suggestion.admin1, suggestion.country].filter(Boolean).join(', ')}</span>
+                </button>)}
+              </div>}
+            </div>
             <button className={`voice-button${listening ? ' listening' : ''}`} type="button" onClick={toggleVoiceInput} aria-label={listening ? 'Stop voice input' : 'Start voice input'} title={listening ? 'Stop voice input' : 'Speak a city'}>
               {listening ? <MicOff size={18} /> : <Mic size={18} />}
             </button>
